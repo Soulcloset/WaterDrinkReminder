@@ -1,0 +1,8 @@
+[meta]
+name = "Hydration Reminder"
+author = "Soulcloset"
+category = "Utilities"
+version = "1.0.0"
+
+[script]
+dependencies = ["MLHook", "MLFeedRaceData"]
