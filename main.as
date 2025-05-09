@@ -3,17 +3,6 @@
     by Soulcloset
 */
 
-/*
-    TODO:
-    - Displaying reminder as a pop-up window with a clickable button to close
-    - Showing reminder when dictated by settings
-        - Every X retries
-        - Every X minutes?? maybe??
-    - Less intrusive showNotification at launch when reminders are disabled
-        - This is to remind the user to enable if wanted
-    - Check that user is in solo to avoid cotd interruptions
-*/
-
 enum intervaltypes {
     Retries,
     Minutes,
@@ -30,26 +19,50 @@ bool IntrusiveMode = true;
 intervaltypes IntervalType = intervaltypes::Retries;
 
 [Setting category="General" name="Reminder Interval (Retries)" description="After this many retries on the same map, you will be sent a reminder." min=1]
-int RetryInterval = 5;
+int RetryInterval = 10;
 
 [Setting category="General" name="Reminder Interval (Minutes)" description="After this many minutes, you will be sent a reminder the next time you respawn." min=1]
-int TimeInterval = 5;
+int TimeInterval = 10;
 
 [Setting category="General" name="Reminder Text" description="The message displayed when you are reminded to drink water."]
 string ReminderText = "Drink some water!";
 
+/*
+//commented out because I don't know how to do centering when the window is not auto-resized
+[Setting category="UI" name="Window Width" description="The width of the reminder window when it is shown. (Default: x)"]
+int WindowWidth = 150;
+
+[Setting category="UI" name="Window Height" description="The height of the reminder window when it is shown. (Default: y)"]
+int WindowHeight = 100;
+*/
+
+[Setting category="UI" name="Popup Postion X" description="(Default: 960 - center)"]
+int WindowPosX = 960;
+
+[Setting category="UI" name="Popup Postion Y" description="(Default: 540 - center)"]
+int WindowPosY = 540;
+
 [Setting category="Developers" name="Verbose Mode" description="Enable/disable verbose logging to the Openplanet console. (Warning: this will spam the console)"]
 bool verboseMode = false;
+
+//[Setting category="Developers" name="Intruding Mode" description="test"]
+bool intruding = false; //should the intrusive mode window be showing?
 
 
 int curRetries = 0; //current retries
 bool spawnLatch = false; //latch to check if player is in spawning state
 string curMap = ""; //current map uid
 bool logLatch = false; //latch to avoid repeat log messages from respawning
+uint64 lastRemindTime = 0; //time in ms when the last reminder was sent
+bool timeLatch = false; //latch to check if the time has been reached
 
 //ui variables
+vec2 scale = vec2(100, 40);
 vec4 warningColor = vec4(0.9, 0.1, 0.1, 0.8); //red
 vec4 successColor = vec4(0.1, 0.9, 0.1, 0.8); //green
+float enabledHue = 0.25;
+float enabledSat = 0.6805;
+float enabledVal = 0.6627;
 
 void Main(){
     print("Loaded WaterDrinkReminder!");
@@ -120,7 +133,7 @@ void RetryLogic(){
     auto map = app.RootMap;
     auto RaceData = MLFeed::GetRaceData_V4();
     try{
-    auto player = cast<MLFeed::PlayerCpInfo_V4>(RaceData.SortedPlayers_Race[0]);
+        auto player = cast<MLFeed::PlayerCpInfo_V4>(RaceData.SortedPlayers_Race[0]);
         MLFeed::SpawnStatus currentSpawnStatus = player.SpawnStatus;
 
         // If the player is in spawning state, check if there was a map change. If so, set the latch to true.
@@ -155,6 +168,7 @@ void RetryLogic(){
                 if(verboseMode){print("Retry count reached or exceeded: " + curRetries);}
                 SendReminder();
                 curRetries = 0; //reset retries
+                lastRemindTime = Time::get_Now(); //reset timer for time logic
             }
 
             spawnLatch = true; //set latch to avoid double counting
@@ -170,6 +184,29 @@ void RetryLogic(){
 bool TimeLogic(){
     //triggers reminders based on minutes after next respawn
     //returns true if the reminder was sent - this is to facilitate the Both setting
+    auto app = cast<CTrackMania>(GetApp());
+    auto RaceData = MLFeed::GetRaceData_V4();
+    try{
+        auto player = cast<MLFeed::PlayerCpInfo_V4>(RaceData.SortedPlayers_Race[0]);
+        MLFeed::SpawnStatus currentSpawnStatus = player.SpawnStatus;
+        
+        if((Time::get_Now() - lastRemindTime) >= (TimeInterval * 60 * 1000)){
+            //if the time since the last map change is greater than the interval, send reminder
+            if(verboseMode){print("Time mode: time interval reached");}
+            timeLatch = true; //set latch to notify on next respawn
+            lastRemindTime = Time::get_Now(); //reset timer
+            return true; //return true to indicate that the reminder was sent
+        }
+
+        if(timeLatch && currentSpawnStatus == MLFeed::SpawnStatus::Spawning){
+            SendReminder();
+            timeLatch = false; //reset latch
+            lastRemindTime = Time::get_Now(); //redundant timer reset so the next reminder appears x minutes after you're notified
+        }
+    }
+    catch{
+        return false;
+    }
     return false; //default return
 }
 
@@ -177,12 +214,26 @@ void SendReminder(){
     //this will display the window for the reminder, interrupting gameplay
     if(verboseMode){print("Attempting reminder");}
     if(IntrusiveMode && !InServer()){
-        //popup window
-        if(UI::Begin("Hydration Reminder", IntrusiveMode, UI::WindowFlags::NoCollapse | UI::WindowFlags::MenuBar)){
-            UI::Text(ReminderText);
-        }
+        intruding = true;
     }
     else {
         UI::ShowNotification("Hydration Reminder", ReminderText, successColor,  5000);
+    }
+}
+
+void Render(){
+    float pivotx = 0.5;
+    float pivoty = 0.5;
+    UI::SetNextWindowPos(WindowPosX, WindowPosY, UI::Cond::Appearing, pivotx, pivoty);
+    //UI::SetNextWindowSize(WindowWidth, WindowHeight, UI::Cond::Appearing);
+    if (intruding){
+        UI::Begin("Hydrate", UI::WindowFlags::AlwaysAutoResize | UI::WindowFlags::NoScrollbar | UI::WindowFlags::NoCollapse | UI::WindowFlags::NoMove | UI::WindowFlags::NoResize);
+        UI::SetNextItemWidth(0.9);
+        UI::Text(ReminderText);
+        if(UI::ButtonColored("Done!", enabledHue , enabledSat, enabledVal, scale)){
+            intruding = false;
+            UI::ShowNotification("Hydration Reminder", "Reminder dismissed.", successColor,  5000);
+        }
+        UI::End();
     }
 }
